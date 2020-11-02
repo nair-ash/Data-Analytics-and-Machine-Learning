@@ -1,0 +1,389 @@
+---
+title: "Classification models to predict tumor"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+
+#1 - DATA ACQUISITION
+#Acquired Wisconsin Breast Cancer Diagnostic dataset from UCI Machine Learning Repository at http://archive.ics.uci.edu/ml
+
+#Breast cancer screening allows the disease to be diagnosed and treated prior to it causing noticeable symptoms.
+#The process of early detection involves examining the breast tissue for abnormal lumps and masses.
+#If a lump is found, cells are extracted and examined to determine if the mass is malignant or benign
+
+#Data was download as a csv file directly from the UCI ML Repository.
+```{r}
+names <- c('id_number','diagnosis',
+           'radius_mean','texture_mean',
+           'perimeter_mean','area_mean',
+           'smoothness_mean','compactness_mean',
+           'concavity_mean','concave_points_mean',
+           'symmetry_mean','fractal_dimension_mean',
+           'radius_se','texture_se',
+           'perimeter_se','area_se',
+           'smoothness_se','compactness_se',
+           'concavity_se','concave_points_se',
+           'symmetry_se','fractal_dimension_se',
+           'radius_worst','texture_worst',
+           'perimeter_worst','area_worst',
+           'smoothness_worst','compactness_worst',
+           'concavity_worst','concave_points_worst',
+           'symmetry_worst','fractal_dimension_worst')
+
+BCancer <- read.csv('https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data', header = FALSE, sep = ",", quote = "\"'",col.names = names, stringsAsFactors = FALSE)
+
+str(BCancer)
+```
+#The dataset contains 569 examples of cancer biopsies, with 32 attributes each.
+#1 attribute is id number and other is the cancer diagnosis. 
+#The diagnosis is either "M" - Malignant or "B" - Benign
+#The other 30 attributes include 30 numeric measurements of mean, std error, worst value of 10 different features of digitized cell nuclei. All the features relate to the shape and size of the cell nuclei.
+
+#2 - DATA EXPLORATION
+```{r}
+#Dropping ID Number
+BCancer$id_number <- NULL
+head(BCancer)
+
+#To get number of benign and malignant cases from diagnosis column
+table(BCancer$diagnosis)
+
+#To convert diagnosis variable to factor 
+BCancer$diagnosis<- factor(BCancer$diagnosis, levels = c("B", "M"),
+ labels = c("Benign", "Malignant"))
+
+#To get the number of Benign and Malignant cases
+round(prop.table(table(BCancer$diagnosis)) * 100, digits = 1)
+```
+#We can drop the 1st attribute i.e. ID Number since it is a unique identifier for each patient in the dataset and so does not provide any useful information so can be excluded.
+#From table() we get 357 benign cases and 212 malignant cases
+#Since the target attribute is diagnosis 1st convert it into factors and then recode "M" and "B" to Malignant and Benign for better information.
+#Running prop.table() shows 62.7% Benign cases and 37.3% Malignant cases
+
+#2.1 - Exploratory dataplots
+```{r}
+#install.packages("dplyr")
+library(dplyr)
+barplot(table(BCancer$diagnosis), main = "Benign and Malignant cases")
+
+#To show scatterplot of matrices
+#install.packages("psych")
+library(psych)
+pairs.panels(BCancer[,c(1:6)], method="pearson",
+             density=TRUE, ellipses=TRUE, show.points = TRUE,
+             pch=1, lm=TRUE, cex.cor=1, smoother=F, stars = T, main="Breast Cancer Wisconsin- Exploratory Plot")
+```
+#pairs.panels shows scatterplot of matrices with bivariate scatterplots below the diagonal, histograms on the diagonal, and the Pearson correlation above the diagonal.
+#The variables are written on the diagonal. After this each variable is plotted against each other.
+#Row 4 column 2 shows as radius mean increase perimeter mean also increase.
+#The pearson corr between diagnosis and area mean is 0.71
+
+
+#DATA CLEANING AND SHAPING
+```{r}
+#Check for NA in the data
+sum(is.null(BCancer))
+
+#Check for duplicates
+BCancer[duplicated(BCancer)]
+
+#To get summary of all features
+summary(BCancer)
+
+#For detection of outliers
+#Cancer_areaM_out <- barplot(BCancer$area_mean, main = "area mean")$out
+#cancer_areaM <- which(BCancer$area_mean %in% Cancer_areaM_out)
+
+```
+#After summary() we can conclude that normalization will be required. Since, the distance calculation for k-NN depends on the measurement scale of the input fatures. For eg. here the smoothness ranges from 0.05263 to 0.16340 and area varies from 143.5 to 2501. Thus, the impact of area attribute is going to be much more than the smoothness attribute for the distance calculation, which will cause problems in our classifier. Hence, rescaling needs to be done.
+#Summary() also shows that there is no missing data and hence imputing missing values and preparing dummy codes wont be needed.
+
+#Normalizing the data
+```{r}
+#Using normalize() function
+ normalize <- function(x) {
+ return ((x - min(x)) / (max(x) - min(x)))
+}
+
+#To test whether function works
+normalize(c(1, 2, 3, 4, 5))
+normalize(c(10, 20, 30, 40, 50))
+
+#Normalizing the entire dataset
+BC_normalize <- as.data.frame(lapply(BCancer[2:31], normalize))
+
+#To get new summary of area
+summary(BC_normalize$area_mean)
+```
+#normalize() to compare data in different scales
+#lapply() helps to normalize the entire dataset and converts it into a dataframe.
+#summary() after normalization shows area range changes from 143.5 to 2501 to 0 to 1.
+
+#Preparing dummy variables
+```{r}
+#install.packages("dummies")
+#library(dummies)
+#Cancer_dummyVar <- dummyVars("~.",data = BCancer, fullRank = T)
+#Breast_cancer <- data.frame(predict(Cancer_dummyVar, newdata = BCancer))
+#head(Breast_cancer)
+```
+#Code works but not able to knit to pdf
+
+#Data preprocessing
+```{r}
+#install.packages("ggplot2")
+library(ggplot2)
+pca_res <- prcomp(BCancer[,3:ncol(BCancer)], center = TRUE, scale = TRUE)
+plot(pca_res, type="l")
+summary(pca_res)
+
+#PCA on the entire dataframe
+pca_df <- as.data.frame(pca_res$x)
+ggplot(pca_df, aes(x=PC1, y=PC2, col=BCancer$diagnosis)) + geom_point(alpha=0.5)
+```
+-PCA helps in creating set of orthogonal variables.PCA models are better to fit in model fitting algorithms
+-The two first components explains the 0.6218 of the variance. We need 10 principal components to explain more than 0.95 of the variance and 17 to explain more than 0.99
+
+
+#Data preparation - creating training and test datasets
+```{r}
+#Splitting data into testing and training dataset using data extraction method without the target variable(diagnosis)
+cancer_train <- BC_normalize[1:456, ]
+cancer_test <- BC_normalize[457:569, ]
+
+#Splitting data but with target variable
+cancer_train_labels <- BCancer[1:456, 1]
+cancer_test_labels <- BCancer[457:569, 1]
+```
+
+#Model 1 KNN model
+```{r}
+#Creating KNN model
+#install.packages("class")
+library(class)
+#install.packages("caret")
+library(caret)
+cancer_test_pred <- knn(train = cancer_train, test = cancer_test, cl = cancer_train_labels, k = 21)
+
+```
+#The code takes diagnosis attribute in the 1st column of dataframe train and test labels.
+#knn classification means finding the most common data points in the training datasets, and making a guesses based on their classifications. K is number of nearest neighbors that the classifier will use to make its guess/prediction.
+#To determine the value of k, we will apply kNN algorithm to the training dataset across different values of k from 1 to 30
+
+
+#Evaluating model performance
+```{r}
+#install.packages("gmodels")
+library(gmodels)
+CrossTable(x = cancer_test_labels, y = cancer_test_pred,
+ prop.chisq=FALSE)
+
+```
+-Use CrossTable() function to check how well predicted classes in "cancer test pred" vector match with known values in "cancer test labels".
+-This creates a cross tabulation which shows agreement between both vectors. To remove unnecessary chi-square values use prop.chisq=FALSE 
+-The top left cell shows true negative results. 87 out of 113 values were cases where mass is benign and knn algorithm rightly identified it.
+-The bottom right cell shows true positive results. 24 out of 113 values were cases where mass was malignant.
+-The lower left cell is false negative results. The predicted 2 values was benign, but tumor
+was instead malignant, which is a dangerous prediction.
+-The top right cell contains false positive results which means malignant was predicted to be benign. 
+
+# Improving model performance
+# Transformation - z-score standardization
+```{r}
+BCancer_z <- as.data.frame(scale(BCancer[-1]))
+summary(BCancer_z$area_mean)
+cancer_train_knn <- BCancer_z[1:456, ]
+cancer_test_knn <- BCancer_z[457:569, ]
+cancer_train_labels <- BCancer[1:456, 1]
+cancer_test_labels <- BCancer[457:569, 1]
+cancer_test_pred <- knn(train = cancer_train_knn, test = cancer_test_knn, cl = cancer_train_labels, k = 21)
+knn_model <- CrossTable(x = cancer_test_labels, y = cancer_test_pred,
+ prop.chisq = FALSE)
+knn_model
+```
+Normalization may not always be useful method to rescale features. z-score standardized values have no already stated minimum and maximum, and also extreme values are not pushed in the center. But in this case the transformation shows slight decrease in accuracy. Previously correctly identified 98% of examples are now only 95% correctly classified, which is worse and model performance cannot be increased by this method.
+-class package gives basic r functions for classification
+-knn function present in the "class" package will provide a good implementation of the knn algorithm.
+-This function will identify the k Nearest Neighbours for each instance in the test data, using the Euclidean distance (k is a number which is user specified).
+-The classification of test instance is performed by taking "vote" amongst all the k Nearest Neighbours
+-The training and classification is performed in a single knn function call, using 4 parameters (train,test,class,k).
+-Used k=21, wherein k is the no. of neighbours to be incuded in the vote and 21 since there are 469 instances and square root of 469 is approx. 21. This would eliminate tie votes in 2 category outcomes.
+-After applying knn() function it returns a factor vector containing predicted labels for each examples in test dataset
+
+#Model 2 : Naive Bayes
+```{r}
+#install.packages("e1071")
+library(e1071)
+BCancer_classifier <- naiveBayes(cancer_train, cancer_train_labels)
+
+```
+
+#evaluating model performance
+```{r}
+BCancer_test_pred <- predict(BCancer_classifier, cancer_test)
+library(gmodels)
+CrossTable(BCancer_test_pred, cancer_test_labels,
+ prop.chisq = FALSE, prop.t = FALSE,
+ dnn = c('predicted', 'actual'))
+```
+-So 7+2=6 diagnosis were incorrectly classified. 
+
+# Improving model performance
+```{r}
+BCancer_classifier2 <- naiveBayes(cancer_train, cancer_train_labels, laplace = 1)
+
+BCancer_test_pred2 <- predict(BCancer_classifier2, cancer_test)
+
+NB_model<-CrossTable(BCancer_test_pred2, cancer_test_labels,
+ prop.chisq = FALSE, prop.t = FALSE, prop.r = FALSE,
+ dnn = c('predicted', 'actual'))
+
+#library(caret)
+#confusionMatrix(cancer_test,
+# BCancer_classifier2, positive = "diagnosis")
+
+
+```
+## Obtained the same reselts, thus using laplace = 1 did not help in improving the model performance
+
+#Model 3: Random Forest
+```{r}
+names <- c('id_number','diagnosis',
+           'radius_mean','texture_mean',
+           'perimeter_mean','area_mean',
+           'smoothness_mean','compactness_mean',
+           'concavity_mean','concave_points_mean',
+           'symmetry_mean','fractal_dimension_mean',
+           'radius_se','texture_se',
+           'perimeter_se','area_se',
+           'smoothness_se','compactness_se',
+           'concavity_se','concave_points_se',
+           'symmetry_se','fractal_dimension_se',
+           'radius_worst','texture_worst',
+           'perimeter_worst','area_worst',
+           'smoothness_worst','compactness_worst',
+           'concavity_worst','concave_points_worst',
+           'symmetry_worst','fractal_dimension_worst')
+
+BCancer <- read.csv('https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data', header = FALSE, sep = ",", quote = "\"'",col.names = names, stringsAsFactors = FALSE)
+
+str(BCancer)
+```
+
+
+```{r}
+#install.packages("randomForest")
+library(randomForest)
+set.seed(124)
+BCancer$diagnosis = factor(BCancer$diagnosis)
+rf_model <- randomForest(diagnosis~., data = BCancer[-1], 
+                           ntree=500, proximity = T, importance=T)
+  plot(rf_model, main="Random Forest: Error rate vs. Number of trees")
+  print(rf_model)
+```
+#Random Forests, are also called random decision forests, are a popular method that could be used to build good predictive models for regression and classification problems.
+#The output states that random forest included 500 trees and tried 4 featutres at each split. The resubstitution error was poor  i.e 4.04% is bad compared to any other ensemble methods
+
+#evaluation of fit my hold out 
+```{r}
+#ds_train <- BCancer_z[1:284,] 
+#ds_validate <- credit[random_ids[285:427], ] 
+#ds_test <- credit[random_ids[428:569], ]
+
+```
+
+#Evaluation of fit by k fold cross and tuning
+```{r}
+#install.packages("caret")
+library(caret)
+BCancer_N <- cbind(BC_normalize, diagnosis = BCancer$diagnosis)
+#Splitting data into 80% training and 20% testing set
+set.seed(1234)
+data_train <- createDataPartition(BCancer_N$diagnosis, p=0.8, list = FALSE)
+train_ds <- BCancer_N[data_train,]
+test_ds <- BCancer_N[-data_train,]
+nrow(test_ds)
+
+fitControl <- trainControl(method="cv",
+                            number = 10,         #10 fold cross validation
+                            preProcOptions = list(thresh = 0.99), # threshold for pca preprocess
+                            classProbs = TRUE,
+                            summaryFunction = twoClassSummary)
+
+#1 KNN
+model_knn <- train(diagnosis~.,
+                   data = train_ds,
+                   method="knn",
+                   metric="ROC",
+                   preProcess = c('center', 'scale'),
+                   tuneLength=10,
+                   trControl=fitControl)
+pred_knn <- predict(model_knn, test_ds)
+cm_knn <- confusionMatrix(pred_knn, test_ds$diagnosis, positive = "M")
+cm_knn
+#Accuracy:0.9646
+
+#install Klar
+#2 Naive Bayes
+model_nb <- train(diagnosis~.,
+                    data = train_ds,
+                    method="nb",
+                    metric="ROC",
+                    preProcess=c('center', 'scale'),
+                    trace=FALSE,
+                    trControl=fitControl)
+pred_nb <- predict(model_nb, test_ds)
+cm_nb <- confusionMatrix(pred_nb, test_ds$diagnosis, positive = "M")
+cm_nb
+#Accuracy 0.91
+
+#3 Random forest
+model_rf <- train(diagnosis~.,
+                  data = train_ds,
+                  method="rf",
+                  metric="ROC",
+                  #tuneLength=10,
+                  preProcess = c('center', 'scale'),
+                  trControl=fitControl)
+pred_rf <- predict(model_rf, test_ds)
+cm_rf <- confusionMatrix(pred_rf, test_ds$diagnosis, positive = "M")
+cm_rf
+#Accuracy 0.9469
+
+```
+
+
+#Stacked Ensembling
+```{r}
+#Predicting the probabilities
+predictors <- c ("texture_mean",   "perimeter_mean",     "area_mean",      "smoothness_mean","compactness_mean",  "concavity_mean",    "concave_points_mean", "symmetry_mean", "radius_mean","radius_se",        "texture_se",      "perimeter_se",       "area_se",        "smoothness_se",      "compactness_se","concavity_se",     "concave_points_se",   "symmetry_se",       "fractal_dimension_se",  "radius_worst",   "texture_worst","perimeter_worst",    "area_worst",     "smoothness_worst",  "compactness_worst", "concavity_worst",  "concave_points_worst","symmetry_worst",   "fractal_dimension_worst","fractal_dimension_mean")
+
+test_ds$pred_knn_prob<-predict(object = model_knn,test_ds[,predictors],type='prob')
+test_ds$pred_NB_prob<-predict(object = model_nb,test_ds[,predictors],type='prob')
+test_ds$pred_rf_prob<-predict(object = model_rf,test_ds[,predictors],type='prob')
+
+#Taking average of predictions
+test_ds$pred_average<-(test_ds$pred_knn_prob$M+test_ds$pred_NB_prob$M+test_ds$pred_rf_prob$M)/3
+
+#Splitting into binary classes at 0.5
+test_ds$pred_average<-as.factor(ifelse(test_ds$pred_average>0.5,'M','B'))
+
+#Evaluation of models
+list_model <- list(KNN = model_knn, NB=model_nb,RF=model_rf)
+resample <- resamples(list_model)
+bwplot(resample, metric = "ROC")
+
+
+```
+#SUMMARY
+KNN was better model with 95% accuracy compared to random forest 94% accuracy and 91% Naive bayes.
+The final output was stacked ensemble data
+
+
+
+
+
+
